@@ -1,4 +1,4 @@
-# Fix MPI/OFI finalization errors on macOS
+# Fix MPI/OFI finalization errors on macOS test
 import os
 
 os.environ["FI_PROVIDER"] = "tcp"
