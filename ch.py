@@ -58,13 +58,33 @@ def doublewell(p):
 def doublewell_prime(p):
     return -(1-p**2)*p
 
+def doublewell_prime_con(p):
+    return p**3
+
+def doublewell_prime_exp(p):
+    return -p
+
+def implicit_euler():
+    F_phi = (ufl.inner(phi, v)  + eps*m*dt * ufl.inner(ufl.grad(mu), ufl.grad(v)) - ufl.inner(phi_old, v))*ufl.dx
+    F_mu = (ufl.inner(mu, w) - ufl.inner(doublewell_prime(phi), w)/eps - ufl.inner(ufl.grad(phi), grad(w))*eps)*ufl.dx
+    return F_phi, F_mu
+
+def nonlin_convex_split():
+    F_phi = (ufl.inner(phi, v)  + eps*m*dt * ufl.inner(ufl.grad(mu), ufl.grad(v)) - ufl.inner(phi_old, v))*ufl.dx
+    F_mu = (ufl.inner(mu, w) - ufl.inner(doublewell_prime_con(phi) + doublewell_prime_exp(phi_old), w)/eps - ufl.inner(ufl.grad(phi), grad(w))*eps)*ufl.dx
+    return F_phi, F_mu
+
+def lin_convex_split():
+    F_phi = (ufl.inner(phi, v)  + eps*m*dt * ufl.inner(ufl.grad(mu), ufl.grad(v)) - ufl.inner(phi_old, v))*ufl.dx
+    F_mu = (ufl.inner(mu, w) - ufl.inner(2*phi + (phi_old)**3 - 3*phi_old, w)/eps - ufl.inner(ufl.grad(phi), grad(w))*eps)*ufl.dx
+    return F_phi, F_mu
+
 rng = np.random.default_rng(42)
 u.sub(0).interpolate(lambda x: rng.random(x.shape[1]).clip(-0.5,0.5))
 u.x.scatter_forward()
 
 # Variational form
-F_phi = (ufl.inner(phi, v)  + eps*m*dt * ufl.inner(ufl.grad(mu), ufl.grad(v)) - ufl.inner(phi_old, v))*ufl.dx
-F_mu = (ufl.inner(mu, w) - ufl.inner(doublewell_prime(phi), w)/eps - ufl.inner(ufl.grad(phi), grad(w))*eps)*ufl.dx
+F_phi, F_mu = nonlin_convex_split()
 
 F = F_phi +F_mu
 
