@@ -105,6 +105,7 @@ p.view_xy(negative = True)
 p.add_text(f"time: {t}", font_size=12, name="timelabel")
 
 
+energies = []
 for i in range(num_time_steps):
     t += dt  # Update the time constant
     u_old.x.array[:] = u.x.array
@@ -116,3 +117,10 @@ for i in range(num_time_steps):
     grid.point_data["phi"] = u.x.array[dofs].real
     p.app.processEvents()
     # time.sleep(0.1)
+
+    if i > 0:
+        E = fem.assemble_scalar(fem.form((doublewell(phi) + ((eps**2)/2)*ufl.inner(ufl.grad(phi),ufl.grad(phi)))*ufl.dx))
+        energies.append(E)
+
+plt.plot(np.arange(dt,dt*num_time_steps,dt),energies)
+plt.show()
