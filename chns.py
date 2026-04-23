@@ -6,7 +6,7 @@ from dolfinx import mesh, fem, plot, io, la
 from basix.ufl import element, mixed_element
 from dolfinx.fem.petsc import NonlinearProblem, LinearProblem
 import ufl
-from ufl import grad, inner, div, nabla_grad, dot, outer
+from ufl import grad, inner, div, nabla_grad, dot, outer, sym
 import time
 import pyvista
 import pyvistaqt
@@ -29,7 +29,7 @@ eps = 0.025
 sigma = 0.25
 rho = 5
 nu = 0.01
-m = 1
+m0 = 1
 f = fem.Constant(msh, ScalarType((0.0, 0.0))) # body forces
 # advective CH test
 uADV = fem.Constant(msh, ScalarType((-1.0, 0.0)))
@@ -91,47 +91,40 @@ def doublewell(p):
     return 1/4*(1-p**2)**2
 
 def doublewell_prime(p):
-    return -(1-p**2)*p
+    return p**3 - p
 
 
+
+# CH-coupled Navier-Stokes weak form, linear IPCS method
+# Step 1: tentative velocity
+a1 = (rho*dot(u_, q) + dt * (nu*inner(sym(grad(u_)), grad(q)) + rho*dot(dot(u_old, nabla_grad(u_)), q)))*ufl.dx
+L1 = (rho*dot(u_old, q) + dt * (dot(p_old, div(q)) + dot(f, q) + sigma*eps*inner(outer(grad(phi), grad(phi)), grad(q))))*ufl.dx # w/ Korteweg capillarity term
+
+# Step 2: pressure
+a2 = dt * dot(grad(p_), grad(l))*ufl.dx
+L2 = (dt * dot(grad(p_old), grad(l)) - rho*div(u)*l)*ufl.dx
+
+# Step 3: velocity correction
+a3 = rho*dot(u_, q)*ufl.dx
+L3 = (rho*dot(u, q) + dt * dot(p - p_old, div(q)))*ufl.dx
+
+# Advective Cahn-Hilliard weak form
 def implicit_euler():
-    # Navier-Stokes weak form (not yet CHNS!), linear IPCS method
-    # Step 1: tentative velocity
-    a1 = (rho*dot(u_, q) + dt * (nu*inner(grad(u_), grad(q)) + rho*dot(dot(u_old, nabla_grad(u_)), q)))*ufl.dx
-    L1 = (rho*dot(u_old, q) + dt * (dot(p_old, div(q)) + dot(f, q) + sigma*eps*inner(outer(grad(phi), grad(phi)), grad(q))))*ufl.dx # w/ Korteweg capillarity term
+    F_phi = ((phi - phi_old)*v + dt * dot(u,grad(phi))*v +  dt * eps*m0*dot(grad(mu), grad(v)))*ufl.dx # m = eps*m0 for Case II (AGG)
+    F_mu = (mu*w - sigma*(phi**3 - phi_old)*w/eps - sigma*eps*dot(grad(phi), grad(w)))*ufl.dx
+    return F_phi, F_mu, "Implicit Euler"
 
-    # Step 2: pressure
-    a2 = dt * dot(grad(p_), grad(l))*ufl.dx
-    L2 = (dt * dot(grad(p_old), grad(l)) - rho*div(u)*l)*ufl.dx
-
-    # Step 3: velocity correction
-    a3 = rho*dot(u_, q)*ufl.dx
-    L3 = (rho*dot(u, q) + dt * dot(p - p_old, div(q)))*ufl.dx
-
-
-    # Advective Cahn-Hilliard weak form
-    F_phi = ((phi - phi_old)*v + dt * dot(u,grad(phi))*v +  dt * eps*m*dot(grad(mu), grad(v)))*ufl.dx # extra eps factor?
-    F_mu = (mu*w - sigma*doublewell_prime(phi)*w/eps - sigma*eps*dot(grad(phi), grad(w)))*ufl.dx
-    return a1, L1, a2, L2, a3, L3, F_phi, F_mu, "Implicit Euler"
-
-"""
 def nonlin_convex_split():
-    F_phi = (ufl.inner(phi, v)  + eps*m*dt * ufl.inner(ufl.grad(mu), ufl.grad(v)) - ufl.inner(phi_old, v))*ufl.dx
-    F_mu = (ufl.inner(mu, w) - ufl.inner(doublewell_prime_con(phi) + doublewell_prime_exp(phi_old), w)/eps - ufl.inner(ufl.grad(phi), grad(w))*eps)*ufl.dx
+    F_phi = ((phi - phi_old)*v + dt * dot(u,grad(phi))*v +  dt * eps*m0*dot(grad(mu), grad(v)))*ufl.dx # m = eps*m0 for Case II (AGG)
+    F_mu = (mu*w - sigma*doublewell_prime(phi)*w/eps - sigma*eps*dot(grad(phi), grad(w)))*ufl.dx
     return F_phi, F_mu, "Nonlinear Convex Split"
-
-def lin_convex_split():
-    F_phi = (ufl.inner(phi, v)  + eps*m*dt * ufl.inner(ufl.grad(mu), ufl.grad(v)) - ufl.inner(phi_old, v))*ufl.dx
-    F_mu = (ufl.inner(mu, w) - ufl.inner(2*phi + (phi_old)**3 - 3*phi_old, w)/eps - ufl.inner(ufl.grad(phi), grad(w))*eps)*ufl.dx
-    return F_phi, F_mu, "Linear Convex Split"
-"""
 
 rng = np.random.default_rng(42)
 xi.sub(0).interpolate(lambda x: rng.random(x.shape[1]).clip(-0.5,0.5))
 xi.x.scatter_forward()
 
-# Variational form
-a1, L1, a2, L2, a3, L3, F_phi, F_mu, scheme = implicit_euler()
+# Choose time stepping method for CH
+F_phi, F_mu, scheme = nonlin_convex_split()
 
 F = F_phi +F_mu
 
@@ -219,7 +212,7 @@ for i in range(num_time_steps):
 
 
     if i > 0:
-        E = fem.assemble_scalar(fem.form((sigma*doublewell(phi) + (sigma*(eps**2)/2)*inner(grad(phi),grad(phi)) + (rho/2)*inner(u,u))*ufl.dx)) # CHNS energy
+        E = fem.assemble_scalar(fem.form(((sigma/eps)*doublewell(phi) + (sigma*eps/2)*inner(grad(phi),grad(phi)) + (rho/2)*inner(u,u))*ufl.dx)) # CHNS energy
         energies.append(E)
 
 plotter.save_graphic("output/ch_plot.pdf")
