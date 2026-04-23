@@ -30,14 +30,14 @@ sigma = 1
 rho = 0.25
 nu = 0.01
 m = 1
-f = fem.Constant(msh, ScalarType((0.0, 0.0)))
+f = fem.Constant(msh, ScalarType((0.0, 0.0))) # body forces
 # advective CH test
 uADV = fem.Constant(msh, ScalarType((-1.0, 0.0)))
 
 # Function space CH
 P1 = element("Lagrange", msh.basix_cell(), 1)
 V = fem.functionspace(msh, mixed_element([P1,P1]))
-# Function spaces NS
+# Function spaces NS (Taylor-Hood)
 Q = fem.functionspace(msh, ("Lagrange", 2, (msh.geometry.dim,)))
 L = fem.functionspace(msh, ("Lagrange", 1))
 
@@ -95,18 +95,18 @@ def doublewell_prime(p):
 
 
 def implicit_euler():
-    # Navier-Stokes weak form (not yet CHNS!)
+    # Navier-Stokes weak form (not yet CHNS!), linear IPCS method
     # Step 1: tentative velocity
-    a1 = (dot(u_, q) + dt * nu*inner(grad(u_), grad(q)))*ufl.dx
-    L1 = (dot(u_old, q) + dt * ( -dot(dot(u_old, nabla_grad(u_old)), q) - dot(grad(p_old), q) + dot(f, q)))*ufl.dx
+    a1 = (rho*dot(u_, q) + dt * (nu*inner(grad(u_), grad(q)) + rho*dot(dot(u_old, nabla_grad(u_)), q)))*ufl.dx
+    L1 = (rho*dot(u_old, q) + dt * (dot(p_old, div(q)) + dot(f, q)))*ufl.dx
 
     # Step 2: pressure
     a2 = dt * dot(grad(p_), grad(l))*ufl.dx
-    L2 = -rho*div(u)*l*ufl.dx
+    L2 = (dt * dot(grad(p_old), grad(l)) - rho*div(u)*l)*ufl.dx
 
     # Step 3: velocity correction
     a3 = rho*dot(u_, q)*ufl.dx
-    L3 = (rho*dot(u, q) - dt * dot(grad(p), q))*ufl.dx
+    L3 = (rho*dot(u, q) + dt * dot(p - p_old, div(q)))*ufl.dx
 
 
     # Advective Cahn-Hilliard weak form
@@ -135,8 +135,8 @@ a1, L1, a2, L2, a3, L3, F_phi, F_mu, scheme = implicit_euler()
 
 F = F_phi +F_mu
 
-# Problems
 
+# Problems
 problem_CH = NonlinearProblem(
     F,
     xi,
@@ -154,31 +154,7 @@ problem_CH = NonlinearProblem(
         "ksp_error_if_not_converged": True,
     },
 )
-"""
-problem1 = LinearProblem(
-    a1,
-    L1,
-    bcs=bc_u,
-    petsc_options_prefix="ns_step1_",
-    petsc_options={"ksp_type": "preonly", "pc_type": "lu", "ksp_error_if_not_converged": True},
-)
 
-problem2 = LinearProblem(
-    a2,
-    L2,
-    bcs=bc_p,
-    petsc_options_prefix="ns_step2_",
-    petsc_options={"ksp_type": "preonly", "pc_type": "lu", "ksp_error_if_not_converged": True},
-)
-
-problem3 = LinearProblem(
-    a3,
-    L3,
-    bcs=bc_u,
-    petsc_options_prefix="ns_step3_",
-    petsc_options={"ksp_type": "preonly", "pc_type": "lu", "ksp_error_if_not_converged": True},
-)
-"""
 problem1 = LinearProblem(
     a1, L1, bcs=bc_u,
     petsc_options_prefix="ns_step1_",
@@ -198,7 +174,7 @@ problem3 = LinearProblem(
 )
 
 
-# plotting
+# Plotting
 V_phi, dofs = V.sub(0).collapse()
 
 cells, types, x = plot.vtk_mesh(V_phi)
@@ -206,7 +182,7 @@ grid = pyvista.UnstructuredGrid(cells, types, x)
 grid.point_data["phi"] = xi.x.array[dofs].real
 grid.set_active_scalars("phi")
 
-plotter = pyvistaqt.BackgroundPlotter(title=f"CH Phase Plot: {scheme}", auto_update=True)
+plotter = pyvistaqt.BackgroundPlotter(title=f"CH/NS Phase Plot: {scheme}", auto_update=True)
 plotter.add_mesh(grid, clim =[-1, 1], scalar_bar_args={"title": f"$\phi$", "label_font_size": 22, "title_font_size": 28, "vertical": True, "position_x": 0.80, "position_y": 0.15, "height": 0.70})
 plotter.view_xy(negative = True)
 plotter.add_text(f"time: {t}", font_size=12, name="timelabel")
@@ -223,7 +199,7 @@ for i in range(num_time_steps):
     p_old.x.scatter_forward()
     u.x.array[:] = problem1.solve().x.array
     u.x.scatter_forward()
-    print(fem.assemble_scalar(fem.form(inner(u,u)*ufl.dx)))
+    #print(fem.assemble_scalar(fem.form(inner(u,u)*ufl.dx)))
     p.x.array[:] = problem2.solve().x.array
     p.x.scatter_forward()
     u.x.array[:] = problem3.solve().x.array
@@ -258,7 +234,7 @@ ax.set_ylim(np.min(energies)*0.9, np.max(energies))
 
 ax.set_xlabel("t", fontsize=14)
 ax.set_ylabel("E(t)", fontsize=14, rotation=0, labelpad=16)
-ax.set_title(f"CH Free Energy: {scheme}", fontsize=16)
+ax.set_title(f"CH/NS Free Energy: {scheme}", fontsize=16)
 ax.tick_params(axis="both", labelsize=12)
 
 fig.tight_layout()
