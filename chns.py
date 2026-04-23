@@ -6,7 +6,7 @@ from dolfinx import mesh, fem, plot, io, la
 from basix.ufl import element, mixed_element
 from dolfinx.fem.petsc import NonlinearProblem, LinearProblem
 import ufl
-from ufl import grad, inner, div, nabla_grad, dot
+from ufl import grad, inner, div, nabla_grad, dot, outer
 import time
 import pyvista
 import pyvistaqt
@@ -26,8 +26,8 @@ dt = 0.003
 num_time_steps = 5000
 t = 0
 eps = 0.025
-sigma = 1
-rho = 0.25
+sigma = 0.25
+rho = 5
 nu = 0.01
 m = 1
 f = fem.Constant(msh, ScalarType((0.0, 0.0))) # body forces
@@ -98,7 +98,7 @@ def implicit_euler():
     # Navier-Stokes weak form (not yet CHNS!), linear IPCS method
     # Step 1: tentative velocity
     a1 = (rho*dot(u_, q) + dt * (nu*inner(grad(u_), grad(q)) + rho*dot(dot(u_old, nabla_grad(u_)), q)))*ufl.dx
-    L1 = (rho*dot(u_old, q) + dt * (dot(p_old, div(q)) + dot(f, q)))*ufl.dx
+    L1 = (rho*dot(u_old, q) + dt * (dot(p_old, div(q)) + dot(f, q) + sigma*eps*inner(outer(grad(phi), grad(phi)), grad(q))))*ufl.dx # w/ Korteweg capillarity term
 
     # Step 2: pressure
     a2 = dt * dot(grad(p_), grad(l))*ufl.dx
