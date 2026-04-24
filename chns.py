@@ -21,14 +21,15 @@ msh = mesh.create_rectangle(
 )
 
 # Parameters
-lid_speed = 3
+lid_speed = 4
 dt = 0.003
 num_time_steps = 5000
 t = 0
 eps = 0.025
 sigma = 0.25
-rho = 5
-nu = 0.01
+rho1 = 2 # "oil"
+rho2 = 3 # "water"
+nu = 0.005
 m0 = 1
 f = fem.Constant(msh, ScalarType((0.0, 0.0))) # body forces
 # advective CH test
@@ -97,12 +98,14 @@ def doublewell_prime(p):
 
 # CH-coupled Navier-Stokes weak form, linear IPCS method
 # Step 1: tentative velocity
-a1 = (rho*dot(u_, q) + dt * (nu*inner(sym(grad(u_)), grad(q)) + rho*dot(dot(u_old, nabla_grad(u_)), q)))*ufl.dx
+J = (rho1-rho2)*eps*m0*grad(mu)/2
+rho = (1-phi)*rho1/2 + (1+phi)*rho2/2
+a1 = (rho*dot(u_, q) + dt * (dot(dot(rho*u_old + J, nabla_grad(u_)), q) + 0.5*div(rho*u_old + J)*dot(u_, q) + 2*nu*inner(sym(grad(u_)), grad(q))))*ufl.dx # Energy-neutral skew convection
 L1 = (rho*dot(u_old, q) + dt * (dot(p_old, div(q)) + dot(f, q) + sigma*eps*inner(outer(grad(phi), grad(phi)), grad(q))))*ufl.dx # w/ Korteweg capillarity term
 
 # Step 2: pressure
-a2 = dt * dot(grad(p_), grad(l))*ufl.dx
-L2 = (dt * dot(grad(p_old), grad(l)) - rho*div(u)*l)*ufl.dx
+a2 = dt * (1/rho)*dot(grad(p_), grad(l))*ufl.dx
+L2 = (dt * (1/rho)*dot(grad(p_old), grad(l)) - div(u)*l)*ufl.dx
 
 # Step 3: velocity correction
 a3 = rho*dot(u_, q)*ufl.dx
@@ -110,13 +113,13 @@ L3 = (rho*dot(u, q) + dt * dot(p - p_old, div(q)))*ufl.dx
 
 # Advective Cahn-Hilliard weak form
 def implicit_euler():
-    F_phi = ((phi - phi_old)*v + dt * dot(u,grad(phi))*v +  dt * eps*m0*dot(grad(mu), grad(v)))*ufl.dx # m = eps*m0 for Case II (AGG)
-    F_mu = (mu*w - sigma*(phi**3 - phi_old)*w/eps - sigma*eps*dot(grad(phi), grad(w)))*ufl.dx
+    F_phi = ((phi - phi_old)*v - dt * phi*dot(u, grad(v)) + dt * eps*m0*dot(grad(mu), grad(v)))*ufl.dx # Conservative advection form, m = eps*m0 for Case II (AGG)
+    F_mu = (mu*w - sigma*doublewell_prime(phi)*w/eps - sigma*eps*dot(grad(phi), grad(w)))*ufl.dx
     return F_phi, F_mu, "Implicit Euler"
 
 def nonlin_convex_split():
-    F_phi = ((phi - phi_old)*v + dt * dot(u,grad(phi))*v +  dt * eps*m0*dot(grad(mu), grad(v)))*ufl.dx # m = eps*m0 for Case II (AGG)
-    F_mu = (mu*w - sigma*doublewell_prime(phi)*w/eps - sigma*eps*dot(grad(phi), grad(w)))*ufl.dx
+    F_phi = ((phi - phi_old)*v - dt * phi*dot(u, grad(v)) + dt * eps*m0*dot(grad(mu), grad(v)))*ufl.dx # Conservative advection form, m = eps*m0 for Case II (AGG)
+    F_mu = (mu*w - sigma*(phi**3 - phi_old)*w/eps - sigma*eps*dot(grad(phi), grad(w)))*ufl.dx
     return F_phi, F_mu, "Nonlinear Convex Split"
 
 rng = np.random.default_rng(42)
@@ -210,6 +213,8 @@ for i in range(num_time_steps):
     plotter.app.processEvents()
     # time.sleep(0.1)
 
+    # phi conservation test
+    print(fem.assemble_scalar(fem.form(phi*ufl.dx)), i)
 
     if i > 0:
         E = fem.assemble_scalar(fem.form(((sigma/eps)*doublewell(phi) + (sigma*eps/2)*inner(grad(phi),grad(phi)) + (rho/2)*inner(u,u))*ufl.dx)) # CHNS energy
