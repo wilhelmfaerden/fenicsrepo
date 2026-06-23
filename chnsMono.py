@@ -23,7 +23,7 @@ msh = mesh.create_rectangle(
 # Parameters
 lid_speed = 0
 dt = 0.003
-num_time_steps = 1000
+num_time_steps = 2000
 t = 0
 eps = 0.025
 sigma = 0.25
@@ -95,7 +95,7 @@ rho = (1-phi)*rho1/2 + (1+phi)*rho2/2
 # CHNS weak form (no penalty method)
 def implicit_euler():
     F_u = (rho*dot(u - u_old, q) + dt * (dot(dot(rho*u + J, nabla_grad(u)), q)
-            + 2*nu*inner(sym(grad(u)), grad(q)) - dot(p, div(q)) - dot(f, q) + phi*dot(grad(mu), q)))*ufl.dx
+            + 2*nu*inner(sym(grad(u)), grad(q)) - dot(p, div(q)) - dot(f, q) - mu*dot(grad(phi), q)))*ufl.dx
     F_inc = div(u)*l*ufl.dx
     F_phi = ((phi - phi_old)*v - dt * phi*dot(u, grad(v)) + dt * eps*m0*dot(grad(mu), grad(v)))*ufl.dx # Conservative advection form, m = eps*m0 for Case II (AGG)
     F_mu = (mu*w - sigma*doublewell_prime(phi)*w/eps - sigma*eps*dot(grad(phi), grad(w)))*ufl.dx
@@ -103,18 +103,26 @@ def implicit_euler():
 
 def nonlin_convex_split():
     F_u = (rho*dot(u - u_old, q) + dt * (dot(dot(rho*u + J, nabla_grad(u)), q)
-            + 2*nu*inner(sym(grad(u)), grad(q)) - dot(p, div(q)) - dot(f, q) + phi*dot(grad(mu), q)))*ufl.dx
+            + 2*nu*inner(sym(grad(u)), grad(q)) - dot(p, div(q)) - dot(f, q) - mu*dot(grad(phi), q)))*ufl.dx
     F_inc = div(u)*l*ufl.dx
     F_phi = ((phi - phi_old)*v - dt * phi*dot(u, grad(v)) + dt * eps*m0*dot(grad(mu), grad(v)))*ufl.dx # Conservative advection form, m = eps*m0 for Case II (AGG)
     F_mu = (mu*w - sigma*(phi**3 - phi_old)*w/eps - sigma*eps*dot(grad(phi), grad(w)))*ufl.dx
     return F_u, F_inc, F_phi, F_mu, "Nonlinear Convex Split"
+
+def lin_convex_split():
+    F_u = (rho*dot(u - u_old, q) + dt * (dot(dot(rho*u + J, nabla_grad(u)), q)
+            + 2*nu*inner(sym(grad(u)), grad(q)) - dot(p, div(q)) - dot(f, q) - mu*dot(grad(phi), q)))*ufl.dx
+    F_inc = div(u)*l*ufl.dx
+    F_phi = ((phi - phi_old)*v - dt * phi*dot(u, grad(v)) + dt * eps*m0*dot(grad(mu), grad(v)))*ufl.dx # Conservative advection form, m = eps*m0 for Case II (AGG)
+    F_mu = (mu*w - sigma*(2*phi + (phi_old)**3 - 3*phi_old)*w/eps - sigma*eps*dot(grad(phi), grad(w)))*ufl.dx
+    return F_u, F_inc, F_phi, F_mu, "Linear Convex Split"
 
 rng = np.random.default_rng(42)
 xi.sub(0).interpolate(lambda x: rng.random(x.shape[1]).clip(-0.5,0.5))
 xi.x.scatter_forward()
 
 # Choose time stepping method for CH
-F_u, F_inc, F_phi, F_mu, scheme = implicit_euler()
+F_u, F_inc, F_phi, F_mu, scheme = lin_convex_split()
 
 F = F_u + F_inc + F_phi + F_mu
 
@@ -156,7 +164,9 @@ plotter.view_xy(negative = True)
 plotter.add_text(f"time: {t}", font_size=12, name="timelabel")
 
 
+start = time.perf_counter()
 energies = []
+glob_phi = []
 for i in range(num_time_steps):
     t += dt
 
@@ -178,8 +188,15 @@ for i in range(num_time_steps):
     if i > 0:
         E = fem.assemble_scalar(fem.form(((sigma/eps)*doublewell(phi) + (sigma*eps/2)*inner(grad(phi),grad(phi)) + (rho/2)*inner(u,u))*ufl.dx)) # CHNS energy
         energies.append(E)
+        int_phi = fem.assemble_scalar(fem.form(phi*ufl.dx))
+        glob_phi.append(int_phi)
 
-plotter.save_graphic("output/ch_plot.pdf")
+end = time.perf_counter()
+print(f"Simulation time: {end-start:.6f}")
+np.savetxt(f"output/monoCHNS_energies_{scheme}.txt", energies, header=scheme)
+
+
+plotter.save_graphic(f"output/monoCHNS_plot_{scheme}.pdf")
 
 
 # Latex rendering
@@ -190,6 +207,8 @@ plt.rcParams.update({
 })
 
 t_vals = np.arange(dt, dt * num_time_steps, dt)
+
+
 fig, ax = plt.subplots()
 ax.plot(t_vals, energies)
 ax.grid(True)
@@ -198,9 +217,26 @@ ax.set_ylim(np.min(energies)*0.9, np.max(energies))
 
 ax.set_xlabel(r"$t$", fontsize=14)
 ax.set_ylabel(r"$\mathcal{E}(t)$", fontsize=14, rotation=0, labelpad=16)
-ax.set_title(f"CHNS Free Energy: {scheme}", fontsize=16)
+ax.set_title(f"Monolithic: {scheme}", fontsize=16)
 ax.tick_params(axis="both", labelsize=12)
 
 fig.tight_layout()
-fig.savefig("output/ch_energy.pdf", dpi=200)
+fig.savefig(f"output/monoCHNS_energy_{scheme}.pdf", dpi=200)
+plt.show()
+
+
+
+fig, ax = plt.subplots()
+ax.plot(t_vals, glob_phi)
+ax.grid(True)
+ax.set_xlim(0, dt*num_time_steps)
+ax.set_ylim(np.min(glob_phi), np.max(glob_phi))
+
+ax.set_xlabel(r"$t$", fontsize=14)
+ax.set_ylabel(r"$\int_{\Omega} \phi(t) \, dx$", fontsize=14, labelpad=16)
+ax.set_title(f"Monolithic: {scheme}", fontsize=16)
+ax.tick_params(axis="both", labelsize=12)
+
+fig.tight_layout()
+fig.savefig(f"output/monoCHNS_phi_{scheme}.pdf", dpi=200)
 plt.show()
